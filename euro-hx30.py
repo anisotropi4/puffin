@@ -2,10 +2,10 @@
 """euro-hx30: project population density onto two hexagon orientations"""
 
 import datetime as dt
+import warnings
 from functools import partial
 
 # os.environ["USE_PYGEOS"] = "0"
-import geopandas as gp
 import numpy as np
 import pandas as pd
 from pyogrio import read_dataframe, write_dataframe
@@ -13,10 +13,12 @@ from shapely import set_precision
 
 from shared.util import (
     append_layer,
+    density,
     filter_hexagon,
-    get_hex_id,
-    get_hexagon,
-    get_hx_centre,
+    get_base_grid,
+    get_circle,
+    get_grid,
+    get_oriented_hex,
     get_population,
     log,
     set_pivot,
@@ -37,72 +39,15 @@ get_population_path = partial(get_population, inpath=INPATH)
 START = dt.datetime.now()
 
 
-def get_circle():
-    """get_circle:
-
-    returns:
-      circle GeoDataFrame centre Poinr and Polygon
-    """
-    circle = read_dataframe(INPATH, layer="circle")
-    centre = circle.centroid
-    return centre, circle
-
-
-def get_grid(n, circle):
-    """get_grid: return sufficient grid points to allow construction of hexagons"
-    "in two orientations to cover circle. boost and offset parameters determined"
-    "by trial and error"""
-    hex_id = get_hex_id(n, circle)
-    r = gp.GeoSeries(get_hx_centre(hex_id), crs=CRS)
-    return r.apply(set_precision_one)
-
-
-def density(this_gf, column="population"):
-    """density: from GeoSeries 'this_gf' return km2 density of 'column'"""
-    return 1.0e6 * this_gf[column] / this_gf.area
-
-
-def get_base_grid(n, circle):
-    """get_base_grid:
-
-    input:
-      n: h3 level
-      circle: perimiter
-
-    returns:
-      GeoSeries hexagon point grid
-    """
-    circle_zone = circle.buffer(370.0e3)
-    if n == 1:
-        circle_zone = circle.buffer(600.0e3)
-    return get_grid(n, circle_zone)
-
-
-def get_oriented_hex(angle, base_grid, pivot, circle):
-    """get_oriented_hx:
-
-    input:
-      angle:
-      base_grid:
-      privot:
-      circle:
-
-    returns:
-      rotated GeoSeries hexagon grid clipped to circle boundary
-    """
-    r = get_hexagon(base_grid.rotate(angle, origin=pivot))
-    r = r.clip(circle).explode(index_parts=False)
-    ix = r.type == "Polygon"
-    return r[ix].reset_index(drop=True)
-
-
 def main(max_range=6):
-    """main:
+    """main: project European population and density data onto a hexagons
+    in two orientations
 
     returns:
       None
     """
-    centre, circle = get_circle()
+    warnings.simplefilter(action="ignore", category=FutureWarning)
+    centre, circle = get_circle(INPATH)
     write_dataframe(centre.to_frame("geometry"), OUTPATH, "centre")
     write_dataframe(circle, OUTPATH, "circle")
     outer = read_dataframe(INPATH, layer="outer")
