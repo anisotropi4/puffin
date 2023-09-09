@@ -419,7 +419,7 @@ if __name__ == "__main__":
         "ine": ["GBR", "IMN", "IRL"],
         "dach": ["AUT", "BEL", "CHE", "DEU", "LIE", "LUX"],
         "fra": ["FRA"],
-        "ibe": ["ESP", "POR"],
+        "ibe": ["ESP", "PRT"],
     }
     parser = argparse.ArgumentParser(
         description="create detailed region interpolated hexagon"
