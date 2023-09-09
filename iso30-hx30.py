@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""iso-hx30.py: """
+"""iso-hx30.py: create region detailed interpolated hexagon"""
+import argparse
 import warnings
 from functools import partial
 
@@ -26,12 +27,8 @@ from shared.util import (
 pd.set_option("display.max_columns", None)
 WGS84 = "EPSG:4326"
 CRS = "EPSG:3034"
-BOUNDARY = ["GBR", "IMN", "IRL"]
-# BOUNDARY = ["AUT", "BEL", "CHE", "DEU", "LIE", "LUX"]
 
 INPATH = "europa.gpkg"
-OUTPATH = "ine.gpkg"
-# OUTPATH = "dach.gpkg"
 
 set_precision_one = partial(set_precision, grid_size=1.0)
 
@@ -104,11 +101,13 @@ def get_euro_boundary():
     return _get_euro_boundary
 
 
-def set_region_boundary(boundary):
+def set_region_boundary(outpath, boundary, country):
     """set_region_boundary:
 
     args:
+      outpath: output file path
       boundary: European GeoDataFrame
+      country: ISO A3 country list
 
     returns:
       GeoDataFrame region boundary
@@ -116,21 +115,22 @@ def set_region_boundary(boundary):
     """
     layer = "region_boundary"
     try:
-        r = read_dataframe(OUTPATH, layer=layer)
+        r = read_dataframe(outpath, layer=layer)
         return r
     except (DataLayerError, DataSourceError):
         pass
-    ix = boundary["a3_code"].isin(BOUNDARY)
+    ix = boundary["a3_code"].isin(country)
     r = boundary.loc[ix]
     r.loc[:, "geometry"] = simplify_boundary(r)
-    write_dataframe(r, OUTPATH, layer=layer)
+    write_dataframe(r, outpath, layer=layer)
     return r
 
 
-def set_region_outer(boundary):
+def set_region_outer(outpath, boundary, country):
     """set_region_outer:
 
     args:
+      country: ISO A3 country list
 
     returns:
 
@@ -142,17 +142,18 @@ def set_region_outer(boundary):
         return r
     except (DataLayerError, DataSourceError):
         pass
-    r = set_region_boundary(boundary)
+    r = set_region_boundary(outpath, boundary, country)
     r = gp.GeoSeries(simplify_outer(r), crs=CRS)
-    write_dataframe(r.to_frame("geometry"), OUTPATH, layer=layer)
+    write_dataframe(r.to_frame("geometry"), outpath, layer=layer)
     return r
 
 
-def set_region_circle(boundary):
+def set_region_circle(outpath, boundary, country):
     """set_region_circle:
 
     args:
       boundary:
+      country: ISO A3 country list
 
     returns:
        GeoSeries centre point and circle GeoSeries
@@ -160,19 +161,19 @@ def set_region_circle(boundary):
     """
     layer = "region_circle"
     try:
-        r = read_dataframe(OUTPATH, layer=layer)
+        r = read_dataframe(outpath, layer=layer)
         point = gp.GeoSeries(r.centroid, crs=CRS)
         return point, r
     except (DataLayerError, DataSourceError):
         pass
-    r = set_region_outer(boundary)
+    r = set_region_outer(outpath, boundary, country)
     r = r.minimum_bounding_circle()
-    write_dataframe(r.to_frame("geometry"), OUTPATH, layer=layer)
+    write_dataframe(r.to_frame("geometry"), outpath, layer=layer)
     point = gp.GeoSeries(r.centroid, crs=CRS)
     return point, r
 
 
-def set_zone_circle(circle, this_buffer=200.0e3):
+def set_zone_circle(outpath, circle, this_buffer=200.0e3):
     """set_zone_circle:
 
     args:
@@ -189,7 +190,7 @@ def set_zone_circle(circle, this_buffer=200.0e3):
     except (DataLayerError, DataSourceError):
         pass
     r = circle.buffer(this_buffer)
-    write_dataframe(r.to_frame("geometry"), OUTPATH, layer=layer)
+    write_dataframe(r.to_frame("geometry"), outpath, layer=layer)
     point = gp.GeoSeries(r.centroid, crs=CRS)
     return point, r
 
@@ -211,7 +212,7 @@ def get_zone_boundary(circle, boundary, this_buffer=0.0):
     return boundary[ix]
 
 
-def set_zone_outer(zone_circle, this_buffer=0.0):
+def set_zone_outer(outpath, zone_circle, this_buffer=0.0):
     """set_zone_outer:
 
     args:
@@ -232,7 +233,7 @@ def set_zone_outer(zone_circle, this_buffer=0.0):
     r = simplify_outer(r)
     r = gp.GeoSeries(r, crs=CRS)
     r = r.clip(circle).to_frame("geometry")
-    write_dataframe(r, OUTPATH, layer=layer)
+    write_dataframe(r, outpath, layer=layer)
     return r
 
 
@@ -326,7 +327,7 @@ def get_hexagon3(grid, length, circle):
     return r
 
 
-def set_hexagon(grid, length, circle, layer):
+def set_hexagon(outpath, grid, length, circle, layer):
     """set_hexagon:
 
     args:
@@ -351,7 +352,7 @@ def set_hexagon(grid, length, circle, layer):
     r = r.drop_duplicates(subset="geometry").reset_index(drop=True)
     ix = r.centroid.map(get_yx).sort_values()
     r = r.loc[ix.index].reset_index(drop=True)
-    write_dataframe(r, OUTPATH, layer=layer)
+    write_dataframe(r, outpath, layer=layer)
     return r
 
 
@@ -377,7 +378,7 @@ def get_hex_grid(exterior, this_buffer, n, pivot, angle):
     return grid.drop_duplicates().reset_index(drop=True)
 
 
-def main():
+def main(outpath, region):
     """1. get region boundary
     2. get region outer
     3. get region circle
@@ -386,17 +387,18 @@ def main():
     6. get zone outer
     7. get zone exterior
 
+
     returns:
       None
 
     """
-    log("start")
+    log(f"start\t{outpath}")
     warnings.simplefilter(action="ignore", category=FutureWarning)
     euro_boundary = get_euro_boundary()
-    _, circle = set_region_circle(euro_boundary())
-    centre_point, zone_circle = set_zone_circle(circle)
+    _, circle = set_region_circle(outpath, euro_boundary(), region)
+    centre_point, zone_circle = set_zone_circle(outpath, circle)
     pivot = centre_point[0]
-    exterior = get_exterior(set_zone_outer(zone_circle))
+    exterior = get_exterior(set_zone_outer(outpath, zone_circle))
     for n in range(1, 9):
         length = get_hside(n)
         for m in ["00", "30"]:
@@ -407,10 +409,30 @@ def main():
                 continue
             grid = get_hex_grid(exterior, 2.5 * length, n, pivot, int(m))
             log("interpolate")
-            set_hexagon(grid, length, zone_circle, f"interpolate-{key}")
+            set_hexagon(outpath, grid, length, zone_circle, f"interpolate-{key}")
             log(f"wrote layer {key}")
     log("wrote hex world-pop")
 
 
 if __name__ == "__main__":
-    main()
+    COUNTRY = {
+        "ine": ["GBR", "IMN", "IRL"],
+        "dach": ["AUT", "BEL", "CHE", "DEU", "LIE", "LUX"],
+        "fra": ["FRA"],
+        "ibe": ["ESP", "POR"],
+    }
+    parser = argparse.ArgumentParser(
+        description="create detailed region interpolated hexagon"
+    )
+    parser.add_argument(
+        "region",
+        nargs="?",
+        type=str,
+        help="country option",
+        default="ine",
+        choices=list(COUNTRY.keys()),
+    )
+    args = parser.parse_args()
+    OUTPATH = f"{args.region}.gpkg"
+    REGION = COUNTRY[args.region]
+    main(OUTPATH, REGION)
