@@ -16,6 +16,7 @@ from tobler.area_weighted import area_interpolate
 from shared.util import (
     append_layer,
     density,
+    get_circle,
     get_grid,
     get_hexagon,
     get_hside,
@@ -81,7 +82,7 @@ def get_population2(this_hx, inpath):
     return r[column].values
 
 
-def get_euro_boundary():
+def get_euro_boundary(inpath):
     """get_euro_boundary:
 
     args:
@@ -91,7 +92,7 @@ def get_euro_boundary():
       cached simplified GeoDataFrame European boundary
 
     """
-    _r = read_dataframe(INPATH, "boundary")
+    _r = read_dataframe(inpath, "boundary")
     _r["geometry"] = _r["geometry"].apply(set_precision_one)
 
     def _get_euro_boundary():
@@ -138,7 +139,7 @@ def set_region_outer(outpath, boundary, country):
     """
     layer = "region_outer"
     try:
-        r = read_dataframe(OUTPATH, layer=layer)
+        r = read_dataframe(outpath, layer=layer)
         return r
     except (DataLayerError, DataSourceError):
         pass
@@ -184,7 +185,7 @@ def set_zone_circle(outpath, circle, this_buffer=200.0e3):
     """
     layer = "zone_circle"
     try:
-        r = read_dataframe(OUTPATH, layer=layer)
+        r = read_dataframe(outpath, layer=layer)
         point = gp.GeoSeries(r.centroid, crs=CRS)
         return point, r
     except (DataLayerError, DataSourceError):
@@ -212,7 +213,7 @@ def get_zone_boundary(circle, boundary, this_buffer=0.0):
     return boundary[ix]
 
 
-def set_zone_outer(outpath, zone_circle, this_buffer=0.0):
+def set_zone_outer(outpath, euro_boundary, zone_circle, this_buffer=0.0):
     """set_zone_outer:
 
     args:
@@ -223,13 +224,12 @@ def set_zone_outer(outpath, zone_circle, this_buffer=0.0):
     """
     layer = "zone_outer"
     try:
-        r = read_dataframe(OUTPATH, layer=layer)
+        r = read_dataframe(outpath, layer=layer)
         return r
     except (DataLayerError, DataSourceError):
         pass
     circle = zone_circle.buffer(this_buffer)
-    euro_boundary = get_euro_boundary()
-    r = get_zone_boundary(circle, euro_boundary())
+    r = get_zone_boundary(circle, euro_boundary)
     r = simplify_outer(r)
     r = gp.GeoSeries(r, crs=CRS)
     r = r.clip(circle).to_frame("geometry")
@@ -377,16 +377,31 @@ def get_hex_grid(exterior, this_buffer, n, pivot, angle):
         grid = pd.concat([r, grid])
     return grid.drop_duplicates().reset_index(drop=True)
 
+def clip_boundary(boundary, circle):
+    """clip_boundary: remove geometries in boundary outside of circle
+
+    args:
+      boundary:
+      circle:
+    
+    returns:
+      boundary: 
+
+    """
+    ix = boundary["geometry"].sindex.query(circle["geometry"], predicate="contains")
+    return boundary.loc[ix[1]].reset_index(drop=True)
+    
 
 def main(outpath, region):
-    """1. get region boundary
+    """main:
+    1. get region boundary
     2. get region outer
     3. get region circle
     4. get buffered circle
     5. get zone boundary
     6. get zone outer
     7. get zone exterior
-
+    8. interpolate
 
     returns:
       None
@@ -394,18 +409,20 @@ def main(outpath, region):
     """
     log(f"start\t{outpath}")
     warnings.simplefilter(action="ignore", category=FutureWarning)
-    euro_boundary = get_euro_boundary()
-    _, circle = set_region_circle(outpath, euro_boundary(), region)
+    _, euro_circle = get_circle(INPATH)
+    euro_boundary_fn = get_euro_boundary(INPATH)
+    euro_boundary = clip_boundary(euro_boundary_fn(), euro_circle)
+    _, circle = set_region_circle(outpath, euro_boundary, region)
     centre_point, zone_circle = set_zone_circle(outpath, circle)
     pivot = centre_point[0]
-    exterior = get_exterior(set_zone_outer(outpath, zone_circle))
+    exterior = get_exterior(set_zone_outer(outpath, euro_boundary, zone_circle))
     for n in range(1, 9):
         length = get_hside(n)
         for m in ["00", "30"]:
             log(f"{str(n).zfill(2)}\thex world-pop")
             log(f"{str(n).zfill(2)}\t{m}")
             key = f"{str(n).zfill(2)}-{m}"
-            if append_layer(OUTPATH, f"interpolate-{key}"):
+            if append_layer(outpath, f"interpolate-{key}"):
                 continue
             grid = get_hex_grid(exterior, 2.5 * length, n, pivot, int(m))
             log("interpolate")
